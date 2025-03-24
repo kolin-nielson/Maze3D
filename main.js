@@ -1,8 +1,97 @@
 import { initShaderProgram } from "./shader.js";
 import { Maze } from "./maze.js";
-import { Rat } from "./rat.js";
+import { Rat, CapsuleCollider } from "./rat.js";
 import { loadTexture } from "./shapes.js";
 import { Cheese, ExitPortal, ParticleSystem } from "./gameObjects.js";
+
+// Maximum number of point lights supported
+const MAX_LIGHTS = 8;
+
+// Light Manager class
+class LightManager {
+	constructor(maxLights) {
+		this.maxLights = maxLights;
+		this.lights = [];
+		this.ambientLight = [0.2, 0.2, 0.2];
+		this.directionalLight = {
+			direction: [0.0, 0.0, -1.0],
+			color: [0.1, 0.1, 0.1]
+		};
+	}
+	
+	addLight(light) {
+		if (this.lights.length < this.maxLights) {
+			this.lights.push(light);
+			return true;
+		}
+		console.warn('Maximum number of lights reached');
+		return false;
+	}
+	
+	removeLight(index) {
+		if (index >= 0 && index < this.lights.length) {
+			this.lights.splice(index, 1);
+			return true;
+		}
+		return false;
+	}
+	
+	updateLight(index, properties) {
+		if (index >= 0 && index < this.lights.length) {
+			const light = this.lights[index];
+			Object.assign(light, properties);
+			return true;
+		}
+		return false;
+	}
+	
+	setAmbientLight(color) {
+		this.ambientLight = color;
+	}
+	
+	setDirectionalLight(directionalLight) {
+		this.directionalLight = directionalLight;
+	}
+	
+	applyLights(gl, shaderProgram) {
+		// Set ambient light
+		const ambientLightLoc = gl.getUniformLocation(shaderProgram, "uAmbientLight");
+		gl.uniform3fv(ambientLightLoc, new Float32Array(this.ambientLight));
+		
+		// Set directional light
+		const dirLightDirLoc = gl.getUniformLocation(shaderProgram, "uDirectionalLightDir");
+		gl.uniform3fv(dirLightDirLoc, new Float32Array(this.directionalLight.direction));
+		
+		const dirLightColorLoc = gl.getUniformLocation(shaderProgram, "uDirectionalLightColor");
+		gl.uniform3fv(dirLightColorLoc, new Float32Array(this.directionalLight.color));
+		
+		// Apply first light to main light position for backward compatibility
+		if (this.lights.length > 0) {
+			const light = this.lights[0];
+			
+			const lightPosLoc = gl.getUniformLocation(shaderProgram, "uLightPosition");
+			gl.uniform3fv(lightPosLoc, new Float32Array(light.position));
+			
+			const lightColorLoc = gl.getUniformLocation(shaderProgram, "uLightColor");
+			gl.uniform3fv(lightColorLoc, new Float32Array(light.color));
+			
+			const lightAttenuationLoc = gl.getUniformLocation(shaderProgram, "uLightAttenuation");
+			gl.uniform3fv(lightAttenuationLoc, new Float32Array(light.attenuation));
+		}
+		
+		// Future: Apply multiple lights if shader supports it
+	}
+	
+	// Update the position of the first light to follow the player
+	updatePlayerLight(x, y, z) {
+		if (this.lights.length > 0) {
+			this.lights[0].position = [x, y, z];
+		}
+	}
+}
+
+// Add new constant for collision system
+const COLLISION_MARGIN = 0.15; // Buffer zone around walls for smoother movement
 
 main();
 async function main() {
@@ -421,8 +510,28 @@ async function main() {
 			}, 500);
 		}
 		
+		// Create lighting manager for multiple lights
+		const lightManager = new LightManager(MAX_LIGHTS);
+		
+		// Add default light with initial position (will be updated when rat is created)
+		lightManager.addLight({
+			position: [5, 4, 0.5], // Default position in middle of maze
+			color: [1.0, 0.9, 0.7],
+			attenuation: [0.5, 0.5, 0.1], // [constant, linear, quadratic]
+			intensity: 1.5
+		});
+		
+		// Add ambient light to scene
+		lightManager.setAmbientLight([0.15, 0.15, 0.2]);
+		
+		// Add directional light (like moonlight)
+		lightManager.setDirectionalLight({
+			direction: [0.2, 0.3, -1.0],
+			color: [0.1, 0.1, 0.3]
+		});
+		
 		// Start game without minimap
-		startGame(gl, shaderProgram3d, textures, canvas);
+		startGame(gl, shaderProgram3d, textures, canvas, lightManager);
 	} catch (error) {
 		console.error('Error loading textures:', error);
 		
@@ -451,12 +560,32 @@ async function main() {
 			}, 500);
 		}
 		
+		// Create lighting manager for multiple lights
+		const lightManager = new LightManager(MAX_LIGHTS);
+		
+		// Add default light with initial position (will be updated when rat is created)
+		lightManager.addLight({
+			position: [5, 4, 0.5], // Default position in middle of maze
+			color: [1.0, 0.9, 0.7],
+			attenuation: [0.5, 0.5, 0.1], // [constant, linear, quadratic]
+			intensity: 1.5
+		});
+		
+		// Add ambient light to scene
+		lightManager.setAmbientLight([0.15, 0.15, 0.2]);
+		
+		// Add directional light (like moonlight)
+		lightManager.setDirectionalLight({
+			direction: [0.2, 0.3, -1.0],
+			color: [0.1, 0.1, 0.3]
+		});
+		
 		// Start game without minimap
-		startGame(gl, shaderProgram3d, textures, canvas);
+		startGame(gl, shaderProgram3d, textures, canvas, lightManager);
 	}
 };
 
-function startGame(gl, shaderProgram3d, textures, canvas) {
+function startGame(gl, shaderProgram3d, textures, canvas, lightManager) {
 	//
 	// Create content to display
 	//
@@ -469,6 +598,13 @@ function startGame(gl, shaderProgram3d, textures, canvas) {
 	const yhigh = ROWS + MARGIN;
 	const m = new Maze(COLUMNS, ROWS);
 	const r = new Rat(.5, .5, 90, m);
+
+	// Update light position to match rat position
+	lightManager.updatePlayerLight(r.x, r.y, 0.5);
+	
+	// Game state variables
+	let gameComplete = false;
+	let collectedCheese = 0;
 	
 	// Create cheese collectibles
 	const cheeseItems = [];
@@ -501,10 +637,68 @@ function startGame(gl, shaderProgram3d, textures, canvas) {
 	let currentView = OBSERVATION_VIEW; // Start with observation view
 	updateViewModeText();
 
-	let spinLeft = false;
-	let spinRight = false;
-	let scurryForward = false;
-	let gameComplete = false;
+	// Character movement flags
+	let movingForward = false;
+	let movingBackward = false;
+	let turningLeft = false;
+	let turningRight = false;
+	let strafingLeft = false;
+	let strafingRight = false;
+
+	// Input handlers modified to support continuous movement
+	document.addEventListener('keydown', e => {
+		if (e.code === "KeyW") {
+			movingForward = true;
+		}
+		if (e.code === "KeyS") {
+			movingBackward = true;
+		}
+		if (e.code === "KeyA") {
+			turningLeft = true;
+		}
+		if (e.code === "KeyD") {
+			turningRight = true;
+		}
+		if (e.code === "KeyQ") {
+			strafingLeft = true;
+		}
+		if (e.code === "KeyE") {
+			strafingRight = true;
+		}
+		if (e.code === "Digit1") {
+			currentView = TOP_VIEW;
+		}
+		if (e.code === "Digit2") {
+			currentView = OBSERVATION_VIEW;
+		}
+		if (e.code === "Digit3") {
+			currentView = RAT_VIEW;
+		}
+		if (e.code === "KeyP") {
+			togglePerformanceMode();
+		}
+	});
+
+	document.addEventListener('keyup', e => {
+		if (e.code === "KeyW") {
+			movingForward = false;
+		}
+		if (e.code === "KeyS") {
+			movingBackward = false;
+		}
+		if (e.code === "KeyA") {
+			turningLeft = false;
+		}
+		if (e.code === "KeyD") {
+			turningRight = false;
+		}
+		if (e.code === "KeyQ") {
+			strafingLeft = false;
+		}
+		if (e.code === "KeyE") {
+			strafingRight = false;
+		}
+	});
 
 	// Performance optimization variables
 	const RENDER_DISTANCE = 4; // Only render cells within this distance from the rat
@@ -513,19 +707,19 @@ function startGame(gl, shaderProgram3d, textures, canvas) {
 	
 	// Performance mode flag - can be toggled by user
 	let highPerformanceMode = true;
-	
+
 	window.addEventListener("keydown", keyDown);
 	function keyDown(event) {
 		if (gameComplete) return; // Ignore input if game is complete
 		
 		if (event.code == 'KeyW') {
-			scurryForward = true;
+			movingForward = true;
 		}
 		if (event.code == 'KeyA') {
-			spinLeft = true;
+			turningLeft = true;
 		}
 		if (event.code == 'KeyD') {
-			spinRight = true;
+			turningRight = true;
 		}
 		if (event.code == 'KeyT') {
 			currentView = TOP_VIEW;
@@ -541,11 +735,7 @@ function startGame(gl, shaderProgram3d, textures, canvas) {
 		}
 		if (event.code == 'KeyP') {
 			// Toggle performance mode
-			highPerformanceMode = !highPerformanceMode;
-			
-			// Update UI
-			const performanceText = highPerformanceMode ? 'Performance Mode' : 'Quality Mode';
-			document.getElementById('performance-mode').textContent = performanceText;
+			togglePerformanceMode();
 		}
 	}
 	
@@ -565,13 +755,13 @@ function startGame(gl, shaderProgram3d, textures, canvas) {
 	window.addEventListener("keyup", keyUp);
 	function keyUp(event) {
 		if (event.code == 'KeyW') {
-			scurryForward = false;
+			movingForward = false;
 		}
 		if (event.code == 'KeyA') {
-			spinLeft = false;
+			turningLeft = false;
 		}
 		if (event.code == 'KeyD') {
-			spinRight = false;
+			turningRight = false;
 		}
 	}
 
@@ -581,7 +771,6 @@ function startGame(gl, shaderProgram3d, textures, canvas) {
 	let previousTime = 0;
 	let frameCount = 0;
 	let lastFpsUpdate = 0;
-	const MAX_LIGHTS = 1; // Limit number of active lights for performance
 	
 	// Track cheese particle effects
 	const cheeseEffects = [];
@@ -592,7 +781,7 @@ function startGame(gl, shaderProgram3d, textures, canvas) {
 		if (DT > .1)
 			DT = .1;
 		previousTime = currentTime;
-		
+
 		// FPS counter update (once per second)
 		frameCount++;
 		if (currentTime - lastFpsUpdate >= 1.0) {
@@ -631,105 +820,128 @@ function startGame(gl, shaderProgram3d, textures, canvas) {
 		if (currentView == RAT_VIEW)
 			setRatsView(gl, shaderProgram3d, COLUMNS, ROWS, canvas.width / canvas.height, r);
 
-		// Set enhanced lighting parameters
-		// Add ambient light color - brightened for open ceiling
-		const ambientLightLoc = gl.getUniformLocation(shaderProgram3d, "uAmbientLight");
-		if (ambientLightLoc) {
-			gl.uniform3fv(ambientLightLoc, [0.35, 0.35, 0.45]); // Increased ambient light
+		// Apply lighting
+		gl.uniform1i(gl.getUniformLocation(shaderProgram3d, "uUseLighting"), 1);
+		
+		// Update player light position
+		lightManager.updatePlayerLight(r.x, r.y, 0.5);
+		
+		// Apply all lights to the shader
+		lightManager.applyLights(gl, shaderProgram3d);
+		
+		// Set view position for specular calculations
+		let viewPos;
+		if (currentView === RAT_VIEW) {
+			// In first person, the view position is at the rat's position
+			viewPos = [r.x, r.y, 0.5];
+		} else if (currentView === OBSERVATION_VIEW) {
+			// In third person, calculate the camera position
+			const ratRadians = r.degrees * Math.PI / 180;
+			const offsetBehind = 2.0;
+			const offsetHeight = 3.0;
+			const dx = Math.cos(ratRadians);
+			const dy = Math.sin(ratRadians);
+			viewPos = [r.x - dx * offsetBehind, r.y - dy * offsetBehind, offsetHeight];
+		} else {
+			// In top view
+			viewPos = [(xlow + xhigh) / 2, (ylow + yhigh) / 2, 10];
 		}
 		
-		// Only update complex lighting in quality mode or infrequently in performance mode
-		const updateLighting = !highPerformanceMode || (frameCount % LIGHTING_UPDATE_FREQ === 0);
-		
-		if (updateLighting) {
-			// Add directional light (sunlight from above due to no ceiling)
-			const directionalLightDirLoc = gl.getUniformLocation(shaderProgram3d, "uDirectionalLightDir");
-			if (directionalLightDirLoc) {
-				// Light coming from above (more direct downward angle for no ceiling)
-				gl.uniform3fv(directionalLightDirLoc, [0.2, 0.2, -1.0]);
-			}
-			
-			const directionalLightColorLoc = gl.getUniformLocation(shaderProgram3d, "uDirectionalLightColor");
-			if (directionalLightColorLoc) {
-				gl.uniform3fv(directionalLightColorLoc, [1.0, 0.97, 0.9]); // Brighter sunlight from above
-			}
-		}
+		gl.uniform3fv(gl.getUniformLocation(shaderProgram3d, "uViewPosition"), new Float32Array(viewPos));
 
 		// Update game objects
 		if (!gameComplete) {
-			// Update the rat
-			if (scurryForward) {
+			// Process rat movement with improved physics
+			if (movingForward) {
 				r.scurryForward(DT);
-			}
-			if (spinLeft) {
-				r.spinLeft(DT);
-			}
-			if (spinRight) {
-				r.spinRight(DT);
+			} else if (movingBackward) {
+				// Reverse scurrying - turn 180 degrees temporarily, move, then turn back
+				r.degrees += 180;
+				r.scurryForward(DT);
+				r.degrees -= 180;
+			} else {
+				// Apply deceleration when not actively moving
+				r.applyDeceleration(DT);
 			}
 			
-			// Update cheese collectibles
-			let cheeseCollected = 0;
-			for (const cheese of cheeseItems) {
-				cheese.update(DT);
+			// Handle turning
+			if (turningLeft) {
+			r.spinLeft(DT);
+		}
+			if (turningRight) {
+			r.spinRight(DT);
+		}
+
+			// Handle strafing (side movement)
+			if (strafingLeft || strafingRight) {
+				// Store original angle
+				const originalAngle = r.degrees;
 				
-				// Check for collision with rat
-				if (cheese.checkCollision(r)) {
-					// Create a gold particle effect at cheese position - less particles in performance mode
-					const particleCount = highPerformanceMode ? 10 : 20;
-					const cheeseParticles = new ParticleSystem(
-						cheese.x + 0.5, 
-						cheese.y + 0.5, 
-						cheese.z,
-						particleCount,
-						false // Non-continuous effect
-					);
+				// Temporarily rotate 90 degrees to the side
+				if (strafingLeft) {
+					r.degrees -= 90;
+				} else { // strafingRight
+					r.degrees += 90;
+				}
+				
+				// Move in that direction
+				r.scurryForward(DT);
+				
+				// Restore original angle
+				r.degrees = originalAngle;
+			}
+			
+			// Update rat collision bounds
+			r.collider.updatePosition(r.x, r.y, 0.1, r.degrees);
+			
+			// Handle cheese collection
+			for (let i = 0; i < cheeseItems.length; i++) {
+				const cheese = cheeseItems[i];
+				if (!cheese.isCollected) {
+					// Improved collision check
+					const dx = r.x - (cheese.x + 0.5);
+					const dy = r.y - (cheese.y + 0.5);
+					const distSquared = dx*dx + dy*dy;
 					
-					// Override default colors with gold for cheese collection
-					cheeseParticles.particles.forEach(p => {
-						p.color = [1, 0.8, 0.2, 0.8]; // Gold color
-						p.vz = 0.05 + Math.random() * 0.1; // Stronger upward velocity
-						p.vx = (Math.random() - 0.5) * 0.08; // Wider spread
-						p.vy = (Math.random() - 0.5) * 0.08;
-						p.lifetime = highPerformanceMode ? 15 : 30; // Shorter lifetime in performance mode
-					});
-					
-					cheeseParticles.activate();
-					cheeseEffects.push(cheeseParticles); // Add to effects list
-					
-					// Update UI counter
-					cheeseCollected++;
-					document.getElementById('cheese-count').textContent = cheeseCollected;
+					if (distSquared < 0.3 * 0.3) { // Slightly larger collection radius
+						// Collect cheese
+						cheese.isCollected = true;
+						
+						// Create particle effect at cheese location
+						const particleCount = highPerformanceMode ? 15 : 30;
+						const cheeseParticles = new ParticleSystem(
+							cheese.x + 0.5, 
+							cheese.y + 0.5, 
+							cheese.z,
+							particleCount,
+							false // Non-continuous effect
+						);
+						cheeseEffects.push(cheeseParticles);
+						
+						// Update collected cheese count
+						collectedCheese++;
+						document.getElementById('cheese-count').textContent = collectedCheese;
+						
+						// Check if all cheese is collected
+						if (collectedCheese === cheeseItems.length) {
+							// Open exit portal
+							exitPortal.activate();
+						}
+					}
 				}
 			}
 			
-			// Count actually collected cheese
-			cheeseCollected = cheeseItems.filter(cheese => cheese.isCollected).length;
-			document.getElementById('cheese-count').textContent = cheeseCollected;
-			
-			// Check if all cheese is collected
-			const allCheeseCollected = cheeseItems.every(cheese => cheese.isCollected);
-			if (allCheeseCollected) {
-				// Activate exit portal
-				exitPortal.activate();
+			// Check for exit portal collision if all cheese is collected
+			if (collectedCheese === cheeseItems.length && exitPortal.active) {
+				const dx = r.x - (exitPortal.x + 0.5);
+				const dy = r.y - (exitPortal.y + 0.5);
+				const distSquared = dx*dx + dy*dy;
 				
-				// Activate the portal particles
-				particleSystem.activate();
-				
-				// Update goal indicator
-				document.getElementById('goal-indicator').textContent = 'All cheese collected! Find the exit portal!';
-				document.getElementById('goal-indicator').style.backgroundColor = 'rgba(0, 255, 0, 0.5)';
-			}
-			
-			// Update exit portal
-			exitPortal.update(DT);
-			
-			// Check if player has reached exit
-			if (exitPortal.checkCollision(r, allCheeseCollected)) {
-				gameComplete = true;
-				document.getElementById('goal-indicator').textContent = 'Congratulations! You escaped the maze!';
-				document.getElementById('goal-indicator').style.backgroundColor = 'rgba(0, 255, 128, 0.7)';
-				document.getElementById('goal-indicator').style.fontSize = '20px';
+				if (distSquared < 0.4 * 0.4) { // Slightly larger exit radius
+					// Game complete!
+					gameComplete = true;
+					document.getElementById('complete-message').style.display = 'flex';
+				}
 			}
 		}
 		
@@ -756,60 +968,6 @@ function startGame(gl, shaderProgram3d, textures, canvas) {
 		
 		// Draw rat
 		r.draw(gl, shaderProgram3d);
-		
-		// Only update lighting calculations based on performance mode
-		const lightingUpdateFrequency = highPerformanceMode ? LIGHTING_UPDATE_FREQ * 4 : LIGHTING_UPDATE_FREQ;
-		if (frameCount % lightingUpdateFrequency === 0) {
-			// Set lighting position for the shader
-			const lightPositionLoc = gl.getUniformLocation(shaderProgram3d, "uLightPosition");
-			if (lightPositionLoc) {
-				// Dynamic light position that follows the rat
-				if (currentView === RAT_VIEW) {
-					// In first-person, light is near the player
-					const radians = r.degrees * Math.PI / 180;
-					const dx = Math.cos(radians);
-					const dy = Math.sin(radians);
-					gl.uniform3fv(lightPositionLoc, [r.x + dx * 0.5, r.y + dy * 0.5, 0.5]);
-				} else {
-					// Static light in other views
-					gl.uniform3fv(lightPositionLoc, [COLUMNS / 2, ROWS / 2, 2.5]);
-				}
-			}
-			
-			// Set light color - warmer light
-			const lightColorLoc = gl.getUniformLocation(shaderProgram3d, "uLightColor");
-			if (lightColorLoc) {
-				gl.uniform3fv(lightColorLoc, [1.0, 0.95, 0.8]); // Warm light color
-			}
-			
-			// Set light attenuation (how quickly light fades with distance)
-			const lightAttenuationLoc = gl.getUniformLocation(shaderProgram3d, "uLightAttenuation");
-			if (lightAttenuationLoc) {
-				gl.uniform3fv(lightAttenuationLoc, [1.0, 0.35, 0.44]); // Better attenuation values
-			}
-			
-			// Set view position for the shader
-			const viewPositionLoc = gl.getUniformLocation(shaderProgram3d, "uViewPosition");
-			if (viewPositionLoc) {
-				if (currentView === RAT_VIEW) {
-					// In rat view, the eye position is the camera position
-					const radians = r.degrees * Math.PI / 180;
-					const dx = Math.cos(radians);
-					const dy = Math.sin(radians);
-					const eyeX = r.x + dx * 0.5; // Updated to match camera position
-					const eyeY = r.y + dy * 0.5;
-					gl.uniform3fv(viewPositionLoc, [eyeX, eyeY, 0.25]);
-				} else if (currentView === OBSERVATION_VIEW) {
-					// Position view from behind and above rat
-					const ratRadians = r.degrees * Math.PI / 180;
-					const behindX = r.x - Math.cos(ratRadians) * 3.5;
-					const behindY = r.y - Math.sin(ratRadians) * 3.5;
-					gl.uniform3fv(viewPositionLoc, [behindX, behindY, 3]);
-				} else {
-					gl.uniform3fv(viewPositionLoc, [COLUMNS / 2, ROWS / 2, 10]);
-				}
-			}
-		}
 		
 		// Draw exit portal
 		exitPortal.draw(gl, shaderProgram3d);
@@ -841,6 +999,16 @@ function startGame(gl, shaderProgram3d, textures, canvas) {
 		requestAnimationFrame(redraw);
 	}
 	requestAnimationFrame(redraw);
+
+	// Add a togglePerformanceMode function to the startGame function
+	function togglePerformanceMode() {
+		// Toggle performance mode
+		highPerformanceMode = !highPerformanceMode;
+		
+		// Update UI
+		const performanceText = highPerformanceMode ? 'Performance Mode' : 'Quality Mode';
+		document.getElementById('performance-mode').textContent = performanceText;
+	}
 }
 
 function setTopView(gl, shaderProgram, xlow, xhigh, ylow, yhigh, canvasAspect) {
@@ -887,12 +1055,15 @@ function setObservationView(gl, shaderProgram, COLUMNS, ROWS, canvasAspect, rat)
 	const dx = Math.cos(ratRadians);
 	const dy = Math.sin(ratRadians);
 	
+	// Use smoothed position for camera to reduce jerkiness
+	const smoothedPos = rat.getSmoothedPosition ? rat.getSmoothedPosition() : {x: rat.x, y: rat.y};
+	
 	// Calculate the camera position - no wall check needed since we're above the walls
-	const behindX = rat.x - dx * offsetBehind;
-	const behindY = rat.y - dy * offsetBehind;
+	const behindX = smoothedPos.x - dx * offsetBehind;
+	const behindY = smoothedPos.y - dy * offsetBehind;
 	
 	const eye = [behindX, behindY, offsetHeight]; // Higher position above walls
-	const at = [rat.x + dx * 0.5, rat.y + dy * 0.5, 0.3]; // Look at the rat
+	const at = [smoothedPos.x + dx * 0.5, smoothedPos.y + dy * 0.5, 0.3]; // Look at the rat
 	const up = [0, 0, 1]; // Z is up
 	mat4.lookAt(viewMatrix, eye, at, up);
 	
@@ -917,14 +1088,21 @@ function setRatsView(gl, shaderProgram, COLUMNS, ROWS, canvasAspect, rat) {
 	const dx = Math.cos(radians);
 	const dy = Math.sin(radians);
 	
+	// Use smoothed position for first person view to reduce jerkiness
+	// But with less smoothing to avoid lag in controls
+	const smoothedPos = rat.getSmoothedPosition ? {
+		x: rat.x * 0.7 + rat.positionHistory[0]?.x * 0.3,
+		y: rat.y * 0.7 + rat.positionHistory[0]?.y * 0.3
+	} : {x: rat.x, y: rat.y};
+	
 	// Position the camera further forward (0.5 units forward instead of 0.3)
 	// This ensures no part of the triangle is visible in first-person view
-	const eyeX = rat.x + dx * 0.5;
-	const eyeY = rat.y + dy * 0.5;
+	const eyeX = smoothedPos.x + dx * 0.5;
+	const eyeY = smoothedPos.y + dy * 0.5;
 	const eye = [eyeX, eyeY, eyeHeight];
 	
 	// Look further ahead in the direction the rat is facing
-	const at = [rat.x + dx * 3, rat.y + dy * 3, eyeHeight]; 
+	const at = [smoothedPos.x + dx * 3, smoothedPos.y + dy * 3, eyeHeight]; 
 	
 	const up = [0, 0, 1]; // Z is up
 	mat4.lookAt(viewMatrix, eye, at, up);

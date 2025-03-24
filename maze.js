@@ -268,6 +268,12 @@ class Maze {
             return false;
         }
 
+        // Improve the collision detection by using a variable cornering threshold
+        // This allows smoother sliding along walls when close to but not directly facing a corner
+        const cornerThreshold = Math.min(0.15, adjustedRadius * 1.2);
+        const cornerRadius = adjustedRadius * 0.9; // Slightly reduced radius for corners for smoother turns
+
+        // Check cell walls first for direct collisions
         // Check if the object would intersect an existing BOTTOM wall:
         if (this.cells[cellY][cellX].bottom && offsetY - adjustedRadius < 0)
             return false;
@@ -281,36 +287,89 @@ class Maze {
         if (this.cells[cellY][cellX].right && offsetX + adjustedRadius > 1)
             return false;
 
-        // Check corner cases only if we're close to a corner
-        // This allows sliding along walls more smoothly
-        const cornerThreshold = 0.1;
-        
+        // Now check adjacent cells for possible collisions
+        // This improves movement when crossing cell boundaries
+        if (offsetX - adjustedRadius < 0 && cellX > 0) {
+            // Check left adjacent cell's right wall
+            if (this.cells[cellY][cellX-1].right) 
+                return false;
+        }
+        if (offsetX + adjustedRadius > 1 && cellX < this.WIDTH - 1) {
+            // Check right adjacent cell's left wall
+            if (this.cells[cellY][cellX+1].left)
+                return false;
+        }
+        if (offsetY - adjustedRadius < 0 && cellY > 0) {
+            // Check bottom adjacent cell's top wall
+            if (this.cells[cellY-1][cellX].top)
+                return false;
+        }
+        if (offsetY + adjustedRadius > 1 && cellY < this.HEIGHT - 1) {
+            // Check top adjacent cell's bottom wall
+            if (this.cells[cellY+1][cellX].bottom)
+                return false;
+        }
+
+        // Check corner cases with improved logic
         // Bottom-left corner
         if (offsetX < cornerThreshold && offsetY < cornerThreshold) {
+            // Using corner radius for smoother passage
             if ((this.cells[cellY][cellX].left || this.cells[cellY][cellX].bottom) && 
-                Math.sqrt(offsetX * offsetX + offsetY * offsetY) < adjustedRadius)
+                Math.sqrt(offsetX * offsetX + offsetY * offsetY) < cornerRadius)
                 return false;
+                
+            // Also check diagonal cell if we're near the corner
+            if (cellX > 0 && cellY > 0) {
+                const diagCell = this.cells[cellY-1][cellX-1];
+                if ((diagCell.top || diagCell.right) && 
+                    Math.sqrt(offsetX * offsetX + offsetY * offsetY) < cornerRadius)
+                    return false;
+            }
         }
         
         // Top-left corner
         if (offsetX < cornerThreshold && offsetY > 1 - cornerThreshold) {
             if ((this.cells[cellY][cellX].left || this.cells[cellY][cellX].top) && 
-                Math.sqrt(offsetX * offsetX + (1 - offsetY) * (1 - offsetY)) < adjustedRadius)
+                Math.sqrt(offsetX * offsetX + (1 - offsetY) * (1 - offsetY)) < cornerRadius)
                 return false;
+                
+            // Check diagonal cell
+            if (cellX > 0 && cellY < this.HEIGHT - 1) {
+                const diagCell = this.cells[cellY+1][cellX-1];
+                if ((diagCell.bottom || diagCell.right) && 
+                    Math.sqrt(offsetX * offsetX + (1 - offsetY) * (1 - offsetY)) < cornerRadius)
+                    return false;
+            }
         }
         
         // Bottom-right corner
         if (offsetX > 1 - cornerThreshold && offsetY < cornerThreshold) {
             if ((this.cells[cellY][cellX].right || this.cells[cellY][cellX].bottom) && 
-                Math.sqrt((1 - offsetX) * (1 - offsetX) + offsetY * offsetY) < adjustedRadius)
+                Math.sqrt((1 - offsetX) * (1 - offsetX) + offsetY * offsetY) < cornerRadius)
                 return false;
+                
+            // Check diagonal cell
+            if (cellX < this.WIDTH - 1 && cellY > 0) {
+                const diagCell = this.cells[cellY-1][cellX+1];
+                if ((diagCell.top || diagCell.left) && 
+                    Math.sqrt((1 - offsetX) * (1 - offsetX) + offsetY * offsetY) < cornerRadius)
+                    return false;
+            }
         }
         
         // Top-right corner
         if (offsetX > 1 - cornerThreshold && offsetY > 1 - cornerThreshold) {
             if ((this.cells[cellY][cellX].right || this.cells[cellY][cellX].top) && 
-                Math.sqrt((1 - offsetX) * (1 - offsetX) + (1 - offsetY) * (1 - offsetY)) < adjustedRadius)
+                Math.sqrt((1 - offsetX) * (1 - offsetX) + (1 - offsetY) * (1 - offsetY)) < cornerRadius)
                 return false;
+                
+            // Check diagonal cell
+            if (cellX < this.WIDTH - 1 && cellY < this.HEIGHT - 1) {
+                const diagCell = this.cells[cellY+1][cellX+1];
+                if ((diagCell.bottom || diagCell.left) && 
+                    Math.sqrt((1 - offsetX) * (1 - offsetX) + (1 - offsetY) * (1 - offsetY)) < cornerRadius)
+                    return false;
+            }
         }
 
         return true;
