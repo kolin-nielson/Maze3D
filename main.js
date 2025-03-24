@@ -645,61 +645,6 @@ function startGame(gl, shaderProgram3d, textures, canvas, lightManager) {
 	let strafingLeft = false;
 	let strafingRight = false;
 
-	// Input handlers modified to support continuous movement
-	document.addEventListener('keydown', e => {
-		if (e.code === "KeyW") {
-			movingForward = true;
-		}
-		if (e.code === "KeyS") {
-			movingBackward = true;
-		}
-		if (e.code === "KeyA") {
-			turningLeft = true;
-		}
-		if (e.code === "KeyD") {
-			turningRight = true;
-		}
-		if (e.code === "KeyQ") {
-			strafingLeft = true;
-		}
-		if (e.code === "KeyE") {
-			strafingRight = true;
-		}
-		if (e.code === "Digit1") {
-			currentView = TOP_VIEW;
-		}
-		if (e.code === "Digit2") {
-			currentView = OBSERVATION_VIEW;
-		}
-		if (e.code === "Digit3") {
-			currentView = RAT_VIEW;
-		}
-		if (e.code === "KeyP") {
-			togglePerformanceMode();
-		}
-	});
-
-	document.addEventListener('keyup', e => {
-		if (e.code === "KeyW") {
-			movingForward = false;
-		}
-		if (e.code === "KeyS") {
-			movingBackward = false;
-		}
-		if (e.code === "KeyA") {
-			turningLeft = false;
-		}
-		if (e.code === "KeyD") {
-			turningRight = false;
-		}
-		if (e.code === "KeyQ") {
-			strafingLeft = false;
-		}
-		if (e.code === "KeyE") {
-			strafingRight = false;
-		}
-	});
-
 	// Performance optimization variables
 	const RENDER_DISTANCE = 4; // Only render cells within this distance from the rat
 	const LIGHTING_UPDATE_FREQ = 4; // Update lighting every N frames
@@ -708,34 +653,68 @@ function startGame(gl, shaderProgram3d, textures, canvas, lightManager) {
 	// Performance mode flag - can be toggled by user
 	let highPerformanceMode = true;
 
+	// Clear any existing event listeners to prevent duplicates
+	window.removeEventListener("keydown", keyDown);
+	window.removeEventListener("keyup", keyUp);
+	
+	// Set up keyboard event handlers
 	window.addEventListener("keydown", keyDown);
+	window.addEventListener("keyup", keyUp);
+	
+	// Key down handler
 	function keyDown(event) {
 		if (gameComplete) return; // Ignore input if game is complete
 		
-		if (event.code == 'KeyW') {
-			movingForward = true;
+		switch(event.code) {
+			case 'KeyW': movingForward = true; break;
+			case 'KeyS': movingBackward = true; break;
+			case 'KeyA': turningLeft = true; break;
+			case 'KeyD': turningRight = true; break;
+			case 'KeyQ': strafingLeft = true; break;
+			case 'KeyE': strafingRight = true; break;
+			case 'KeyT': 
+				currentView = TOP_VIEW;
+				updateViewModeText();
+				break;
+			case 'KeyO': 
+				currentView = OBSERVATION_VIEW;
+				updateViewModeText();
+				break;
+			case 'KeyR': 
+				currentView = RAT_VIEW;
+				updateViewModeText();
+				break;
+			case 'Digit1': 
+				currentView = TOP_VIEW;
+				updateViewModeText();
+				break;
+			case 'Digit2': 
+				currentView = OBSERVATION_VIEW;
+				updateViewModeText();
+				break;
+			case 'Digit3': 
+				currentView = RAT_VIEW;
+				updateViewModeText();
+				break;
+			case 'KeyP': 
+				// Toggle performance mode
+				highPerformanceMode = !highPerformanceMode;
+				// Update UI
+				const performanceText = highPerformanceMode ? 'Performance Mode' : 'Quality Mode';
+				document.getElementById('performance-mode').textContent = performanceText;
+				break;
 		}
-		if (event.code == 'KeyA') {
-			turningLeft = true;
-		}
-		if (event.code == 'KeyD') {
-			turningRight = true;
-		}
-		if (event.code == 'KeyT') {
-			currentView = TOP_VIEW;
-			updateViewModeText();
-		}
-		if (event.code == 'KeyO') {
-			currentView = OBSERVATION_VIEW;
-			updateViewModeText();
-		}
-		if (event.code == 'KeyR') {
-			currentView = RAT_VIEW;
-			updateViewModeText();
-		}
-		if (event.code == 'KeyP') {
-			// Toggle performance mode
-			togglePerformanceMode();
+	}
+	
+	// Key up handler
+	function keyUp(event) {
+		switch(event.code) {
+			case 'KeyW': movingForward = false; break;
+			case 'KeyS': movingBackward = false; break;
+			case 'KeyA': turningLeft = false; break;
+			case 'KeyD': turningRight = false; break;
+			case 'KeyQ': strafingLeft = false; break;
+			case 'KeyE': strafingRight = false; break;
 		}
 	}
 	
@@ -749,19 +728,6 @@ function startGame(gl, shaderProgram3d, textures, canvas, lightManager) {
 			} else if (currentView === RAT_VIEW) {
 				viewModeElement.textContent = 'First-Person View';
 			}
-		}
-	}
-	
-	window.addEventListener("keyup", keyUp);
-	function keyUp(event) {
-		if (event.code == 'KeyW') {
-			movingForward = false;
-		}
-		if (event.code == 'KeyA') {
-			turningLeft = false;
-		}
-		if (event.code == 'KeyD') {
-			turningRight = false;
 		}
 	}
 
@@ -999,16 +965,6 @@ function startGame(gl, shaderProgram3d, textures, canvas, lightManager) {
 		requestAnimationFrame(redraw);
 	}
 	requestAnimationFrame(redraw);
-
-	// Add a togglePerformanceMode function to the startGame function
-	function togglePerformanceMode() {
-		// Toggle performance mode
-		highPerformanceMode = !highPerformanceMode;
-		
-		// Update UI
-		const performanceText = highPerformanceMode ? 'Performance Mode' : 'Quality Mode';
-		document.getElementById('performance-mode').textContent = performanceText;
-	}
 }
 
 function setTopView(gl, shaderProgram, xlow, xhigh, ylow, yhigh, canvasAspect) {
