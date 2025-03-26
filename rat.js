@@ -214,12 +214,57 @@ class Rat {
         // Movement history for smoothing
         this.positionHistory = [];
         this.maxHistoryLength = 3;
+        
+        // New properties for 3D model
+        this.model = null;
+        this.texture = null;
+        this.animTime = 0;
+        this.scale = 0.04; // Default scale for 3D model
+    }
+    
+    // Set 3D model and texture for the rat
+    setModel(model, texture) {
+        this.model = model;
+        this.texture = texture;
     }
     
     draw(gl, shaderProgram) {
         const modelMatrix = mat4.create();
         
-        // Fixed position, no animation
+        // If we have a 3D model, use it instead of the triangle
+        if (this.model && this.texture) {
+            // Position
+            mat4.translate(modelMatrix, modelMatrix, [this.x, this.y, 0.1]);
+            
+            // Rotation - use degrees but convert to radians for matrix operation
+            mat4.rotateZ(modelMatrix, modelMatrix, (this.degrees * Math.PI / 180));
+            
+            // Add a slight bounce animation
+            const bounceHeight = Math.sin(this.animTime * 5) * 0.03;
+            mat4.translate(modelMatrix, modelMatrix, [0, 0, bounceHeight]);
+            
+            // Fix orientation - rotate so Jerry stands upright
+            // First rotate 90 degrees around X axis to stand him up
+            mat4.rotateX(modelMatrix, modelMatrix, Math.PI / 2);
+            // Rotate another 90 degrees to face the camera better for texture visibility
+            mat4.rotateY(modelMatrix, modelMatrix, Math.PI / 2);
+            
+            // Scale
+            mat4.scale(modelMatrix, modelMatrix, [this.scale, this.scale, this.scale]);
+            
+            // Check if we're in first-person mode
+            const isFirstPerson = gl.getUniformLocation(shaderProgram, "isRatView") && 
+                                 gl.getUniform(shaderProgram, gl.getUniformLocation(shaderProgram, "isRatView"));
+            
+            // Only draw the model if we're not in first-person view
+            if (!isFirstPerson) {
+                // Render 3D model with texture
+                this.renderModel(gl, shaderProgram, modelMatrix);
+            }
+            return;
+        }
+        
+        // Use the original triangle rat if no 3D model is available
         mat4.translate(modelMatrix, modelMatrix, [this.x, this.y, 0.1]); 
         mat4.rotateZ(modelMatrix, modelMatrix, (this.degrees * Math.PI / 180));
 
@@ -242,7 +287,71 @@ class Rat {
         }
     }
     
+    // New method to render the 3D model
+    renderModel(gl, shaderProgram, modelMatrix) {
+        // This function should match the structure in objLoader.js
+        try {
+            // Create and bind VAO
+            const vao = gl.createVertexArray();
+            gl.bindVertexArray(vao);
+            
+            // Create and bind vertex buffer
+            const vertexBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, this.model.vertices, gl.STATIC_DRAW);
+            
+            // Position attribute
+            const positionAttrib = gl.getAttribLocation(shaderProgram, 'vertPosition');
+            gl.vertexAttribPointer(positionAttrib, 3, gl.FLOAT, false, 8 * 4, 0);
+            gl.enableVertexAttribArray(positionAttrib);
+            
+            // Texture coordinate attribute
+            const texCoordAttrib = gl.getAttribLocation(shaderProgram, 'vertTexCoord');
+            gl.vertexAttribPointer(texCoordAttrib, 2, gl.FLOAT, false, 8 * 4, 3 * 4);
+            gl.enableVertexAttribArray(texCoordAttrib);
+            
+            // Normal attribute
+            const normalAttrib = gl.getAttribLocation(shaderProgram, 'vertNormal');
+            gl.vertexAttribPointer(normalAttrib, 3, gl.FLOAT, false, 8 * 4, 5 * 4);
+            gl.enableVertexAttribArray(normalAttrib);
+            
+            // Create and bind index buffer
+            const indexBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, this.model.indices, gl.STATIC_DRAW);
+            
+            // Set model matrix
+            gl.uniformMatrix4fv(gl.getUniformLocation(shaderProgram, "uModelMatrix"), false, modelMatrix);
+            
+            // Enable texture
+            if (this.texture) {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, this.texture);
+                gl.uniform1i(gl.getUniformLocation(shaderProgram, "uSampler"), 0);
+                gl.uniform1i(gl.getUniformLocation(shaderProgram, "uUseTexture"), 1);
+            } else {
+                gl.uniform1i(gl.getUniformLocation(shaderProgram, "uUseTexture"), 0);
+            }
+            
+            // Draw the model
+            gl.drawElements(gl.TRIANGLES, this.model.indexCount, gl.UNSIGNED_SHORT, 0);
+            
+            // Clean up
+            gl.bindVertexArray(null);
+            gl.bindBuffer(gl.ARRAY_BUFFER, null);
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+        } catch (error) {
+            console.error("Error rendering rat model:", error);
+            // Fallback to triangle if model rendering fails
+            drawRat3D(gl, shaderProgram);
+        }
+    }
+    
     scurryForward(DT) {
+        // Update animation time for 3D model
+        this.animTime += DT;
+        
+        // Rest of the method remains the same
         const radians = this.degrees * Math.PI / 180;
         const dx = Math.cos(radians);
         const dy = Math.sin(radians);

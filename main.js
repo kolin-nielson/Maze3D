@@ -3,6 +3,7 @@ import { Maze } from "./maze.js";
 import { Rat, CapsuleCollider } from "./rat.js";
 import { loadTexture } from "./shapes.js";
 import { Cheese, ExitPortal, ParticleSystem } from "./gameObjects.js";
+import { loadOBJModel, renderOBJModel } from "./objLoader.js";
 
 // Maximum number of point lights supported
 const MAX_LIGHTS = 8;
@@ -101,9 +102,28 @@ async function main() {
 	// start gl
 	// 
 	const canvas = document.getElementById('glcanvas');
-	const gl = canvas.getContext('webgl');
+	let gl = canvas.getContext('webgl2');
 	if (!gl) {
-		alert('Your browser does not support WebGL');
+		// Fall back to WebGL 1.0 with extension for VAOs
+		gl = canvas.getContext('webgl');
+		if (!gl) {
+			alert('Your browser does not support WebGL');
+		} else {
+			// Try to get the VAO extension
+			const vaoExt = gl.getExtension('OES_vertex_array_object');
+			if (!vaoExt) {
+				alert('Your browser does not support the VAO extension required for 3D models');
+			} else {
+				console.log('Using WebGL 1.0 with VAO extension');
+				// Add methods to the gl context to match WebGL 2.0 naming
+				gl.createVertexArray = vaoExt.createVertexArrayOES.bind(vaoExt);
+				gl.deleteVertexArray = vaoExt.deleteVertexArrayOES.bind(vaoExt);
+				gl.bindVertexArray = vaoExt.bindVertexArrayOES.bind(vaoExt);
+				gl.isVertexArray = vaoExt.isVertexArrayOES.bind(vaoExt);
+			}
+		}
+	} else {
+		console.log('Using WebGL 2.0');
 	}
 	gl.clearColor(0.05, 0.05, 0.1, 1.0); // Darker background color
 	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -492,6 +512,86 @@ async function main() {
 		ctx.putImageData(imageData, 0, 0);
 	}
 	
+	// Create a procedural texture for Jerry
+	function createJerryTexture(gl) {
+		const canvas = document.createElement('canvas');
+		canvas.width = 512;
+		canvas.height = 512;
+		const ctx = canvas.getContext('2d');
+		
+		// Fill with base color (brown/gray for Jerry)
+		ctx.fillStyle = '#B89470'; // Light brown base color
+		ctx.fillRect(0, 0, canvas.width, canvas.height);
+		
+		// Create fur effect with subtle texture
+		ctx.fillStyle = '#A88566'; // Slightly darker brown for texture
+		for (let i = 0; i < 5000; i++) {
+			const x = Math.random() * canvas.width;
+			const y = Math.random() * canvas.height;
+			const size = Math.random() * 3 + 1;
+			ctx.fillRect(x, y, size, size);
+		}
+		
+		// Add a lighter belly area
+		ctx.fillStyle = '#D6C4A6';
+		ctx.beginPath();
+		ctx.ellipse(256, 300, 120, 180, 0, 0, Math.PI * 2);
+		ctx.fill();
+		
+		// Add facial features
+		// Eyes
+		ctx.fillStyle = '#000000';
+		ctx.beginPath();
+		ctx.ellipse(200, 150, 20, 25, 0, 0, Math.PI * 2);
+		ctx.ellipse(312, 150, 20, 25, 0, 0, Math.PI * 2);
+		ctx.fill();
+		
+		// Nose
+		ctx.fillStyle = '#FF9D9D';
+		ctx.beginPath();
+		ctx.ellipse(256, 200, 15, 10, 0, 0, Math.PI * 2);
+		ctx.fill();
+		
+		// Mouth
+		ctx.strokeStyle = '#000000';
+		ctx.lineWidth = 3;
+		ctx.beginPath();
+		ctx.moveTo(226, 220);
+		ctx.quadraticCurveTo(256, 240, 286, 220);
+		ctx.stroke();
+		
+		// Whiskers
+		ctx.beginPath();
+		ctx.moveTo(226, 210);
+		ctx.lineTo(166, 200);
+		ctx.moveTo(226, 215);
+		ctx.lineTo(166, 215);
+		ctx.moveTo(226, 220);
+		ctx.lineTo(166, 230);
+		
+		ctx.moveTo(286, 210);
+		ctx.lineTo(346, 200);
+		ctx.moveTo(286, 215);
+		ctx.lineTo(346, 215);
+		ctx.moveTo(286, 220);
+		ctx.lineTo(346, 230);
+		ctx.stroke();
+		
+		// Create a texture from the canvas
+		const texture = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, texture);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+		gl.generateMipmap(gl.TEXTURE_2D);
+		
+		// Set texture parameters
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+		
+		return texture;
+	}
+	
 	// Load textures from URLs
 	try {
 		const textures = {
@@ -501,6 +601,22 @@ async function main() {
 			floor: await loadTexture(gl, textureUrls.floor),
 			cheese: await loadTexture(gl, textureUrls.cheese)
 		};
+		
+		// Try to load Jerry model and texture
+		let jerryModel = null;
+		let jerryTexture = null;
+		
+		try {
+			// Load Jerry's 3D model and texture
+			jerryModel = await loadOBJModel('jerry.obj');
+			console.log('Jerry model loaded successfully');
+			
+			// Instead of loading texture, create procedural texture
+			jerryTexture = createJerryTexture(gl);
+			console.log('Jerry texture created successfully');
+		} catch (jerryError) {
+			console.warn('Could not load Jerry model:', jerryError);
+		}
 		
 		// Hide loading screen when textures are loaded
 		if (loadingScreen) {
@@ -530,10 +646,25 @@ async function main() {
 			color: [0.1, 0.1, 0.3]
 		});
 		
-		// Start game without minimap
-		startGame(gl, shaderProgram3d, textures, canvas, lightManager);
+		// Start game with Jerry model and texture
+		startGame(gl, shaderProgram3d, textures, canvas, lightManager, jerryModel, jerryTexture);
 	} catch (error) {
 		console.error('Error loading textures:', error);
+		
+		// Try to load Jerry model and texture even in fallback mode
+		let jerryModel = null;
+		let jerryTexture = null;
+		
+		try {
+			jerryModel = await loadOBJModel('jerry.obj');
+			console.log('Jerry model loaded successfully');
+			
+			// Instead of loading texture, create procedural texture
+			jerryTexture = createJerryTexture(gl);
+			console.log('Jerry texture created successfully');
+		} catch (jerryError) {
+			console.warn('Could not load Jerry model in fallback mode:', jerryError);
+		}
 		
 		// Fallback to simple color textures if loading fails
 		const createColorTexture = (gl, r, g, b) => {
@@ -580,12 +711,12 @@ async function main() {
 			color: [0.1, 0.1, 0.3]
 		});
 		
-		// Start game without minimap
-		startGame(gl, shaderProgram3d, textures, canvas, lightManager);
+		// Start game with null Jerry if loading failed
+		startGame(gl, shaderProgram3d, textures, canvas, lightManager, jerryModel, jerryTexture);
 	}
 };
 
-function startGame(gl, shaderProgram3d, textures, canvas, lightManager) {
+function startGame(gl, shaderProgram3d, textures, canvas, lightManager, jerryModel, jerryTexture) {
 	//
 	// Create content to display
 	//
@@ -598,6 +729,20 @@ function startGame(gl, shaderProgram3d, textures, canvas, lightManager) {
 	const yhigh = ROWS + MARGIN;
 	const m = new Maze(COLUMNS, ROWS);
 	const r = new Rat(.5, .5, 90, m);
+
+	// Set the 3D model for the rat if available
+	if (jerryModel && jerryTexture) {
+		console.log('Setting Jerry model on rat');
+		console.log('Jerry model vertices:', jerryModel.vertices.length);
+		console.log('Jerry model indices:', jerryModel.indices.length);
+		console.log('Jerry texture:', jerryTexture);
+		
+		// Set model and texture on rat
+		r.setModel(jerryModel, jerryTexture);
+		
+		// Adjust the scale if needed - find a good scale for the model
+		r.scale = 0.04; // Size can be adjusted based on model dimensions
+	}
 
 	// Update light position to match rat position
 	lightManager.updatePlayerLight(r.x, r.y, 0.5);
@@ -740,6 +885,9 @@ function startGame(gl, shaderProgram3d, textures, canvas, lightManager) {
 	
 	// Track cheese particle effects
 	const cheeseEffects = [];
+	
+	// We don't need a separate Jerry character anymore since the rat uses the model
+	let jerry = null;
 	
 	function redraw(currentTime) {
 		currentTime *= .001; // milliseconds to seconds
@@ -932,7 +1080,7 @@ function startGame(gl, shaderProgram3d, textures, canvas, lightManager) {
 		// Draw maze with optimization - only render cells near the player
 		m.draw(gl, shaderProgram3d, textures, r.x, r.y, effectiveRenderDistance);
 		
-		// Draw rat
+		// Draw rat (now using the Jerry model if available)
 		r.draw(gl, shaderProgram3d);
 		
 		// Draw exit portal
